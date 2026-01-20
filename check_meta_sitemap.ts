@@ -29,7 +29,7 @@ async function checkSitemap() {
             } else {
                 console.log('Not a valid sitemap.');
             }
-        } catch (e) {
+        } catch (e: any) {
             console.log(`Error fetching ${url}: ${e.message}`);
         }
     }
