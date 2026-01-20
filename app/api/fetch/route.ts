@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
 
     let hasMore = false;
     let nextPageUrl: string | undefined;
-    let detectedPattern: string | undefined;
+    let detectedPattern: string | undefined | null;
 
     if (shouldFetch) {
       console.log(`[API] ${sourceId}: Fetching fresh posts...`);
