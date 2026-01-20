@@ -233,7 +233,7 @@ function getLLMProvider(): LLMProvider {
       console.log('Using free tier Groq model: llama-3.1-8b-instant-128k');
       return new GroqProvider(process.env.GROQ_API_KEY, 'llama-3.1-8b-instant-128k');
     }
-    
+
     // Use specified model or default to gpt-oss-120b
     const groqModel = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
     if (groqModel === 'openai/gpt-oss-120b') {
@@ -241,7 +241,7 @@ function getLLMProvider(): LLMProvider {
     }
     return new GroqProvider(process.env.GROQ_API_KEY, groqModel);
   }
-  
+
   // OpenRouter with free tier models only
   if (process.env.OPENROUTER_API_KEY) {
     return new OpenRouterProvider(
@@ -249,7 +249,7 @@ function getLLMProvider(): LLMProvider {
       process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.2-3b-instruct'
     );
   }
-  
+
   // OpenAI as fallback (may incur charges)
   if (process.env.OPENAI_API_KEY) {
     console.warn('Warning: Using OpenAI API which may incur charges. Consider using Groq or OpenRouter free tier instead.');
@@ -258,7 +258,7 @@ function getLLMProvider(): LLMProvider {
       process.env.OPENAI_BASE_URL
     );
   }
-  
+
   throw new Error('No LLM API key found. Set GROQ_API_KEY (recommended - free), OPENROUTER_API_KEY (free tier), or OPENAI_API_KEY');
 }
 

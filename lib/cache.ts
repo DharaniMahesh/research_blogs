@@ -8,25 +8,16 @@ import path from 'path';
 import { Post, SummarizationResult } from '@/types';
 
 const CACHE_DIR = path.join(process.cwd(), '.cache');
-const POSTS_CACHE_FILE = path.join(CACHE_DIR, 'posts.json');
+const POSTS_DIR = path.join(CACHE_DIR, 'posts'); // New directory for individual post files
 const SUMMARIES_CACHE_FILE = path.join(CACHE_DIR, 'summaries.json');
 const FETCH_TIMESTAMPS_FILE = path.join(CACHE_DIR, 'fetch-timestamps.json');
 
-interface CacheEntry<T> {
-  data: T;
-  timestamp: number;
-}
-
-interface PostsCache {
-  [sourceId: string]: Post[];
+interface FetchTimestamps {
+  [sourceId: string]: number;
 }
 
 interface SummariesCache {
   [url: string]: SummarizationResult;
-}
-
-interface FetchTimestamps {
-  [sourceId: string]: number;
 }
 
 /**
@@ -35,6 +26,7 @@ interface FetchTimestamps {
 async function ensureCacheDir(): Promise<void> {
   try {
     await fs.mkdir(CACHE_DIR, { recursive: true });
+    await fs.mkdir(POSTS_DIR, { recursive: true });
   } catch (error) {
     // Directory might already exist
   }
@@ -62,42 +54,59 @@ async function writeJsonFile<T>(filePath: string, data: T): Promise<void> {
 
 /**
  * Get cached posts for a source
+ * Now reads from individual file: .cache/posts/{sourceId}.json
  */
 export async function getCachedPosts(sourceId: string): Promise<Post[]> {
-  const cache = await readJsonFile<PostsCache>(POSTS_CACHE_FILE, {});
-  return cache[sourceId] || [];
+  // Sanitize sourceId to be safe for filename
+  const safeId = sourceId.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const filePath = path.join(POSTS_DIR, `${safeId}.json`);
+  return readJsonFile<Post[]>(filePath, []);
 }
 
 /**
  * Set cached posts for a source
  */
 export async function setCachedPosts(sourceId: string, posts: Post[]): Promise<void> {
-  const cache = await readJsonFile<PostsCache>(POSTS_CACHE_FILE, {});
-  cache[sourceId] = posts;
-  await writeJsonFile(POSTS_CACHE_FILE, cache);
+  const safeId = sourceId.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const filePath = path.join(POSTS_DIR, `${safeId}.json`);
+  await writeJsonFile(filePath, posts);
 }
 
 /**
  * Append posts to cached posts for a source (for pagination)
  */
 export async function appendCachedPosts(sourceId: string, newPosts: Post[]): Promise<void> {
-  const cache = await readJsonFile<PostsCache>(POSTS_CACHE_FILE, {});
-  const existingPosts = cache[sourceId] || [];
-  
+  const existingPosts = await getCachedPosts(sourceId);
+
   // Deduplicate by URL
   const existingUrls = new Set(existingPosts.map(p => p.url));
   const uniqueNewPosts = newPosts.filter(p => !existingUrls.has(p.url));
-  
-  cache[sourceId] = [...existingPosts, ...uniqueNewPosts];
-  await writeJsonFile(POSTS_CACHE_FILE, cache);
+
+  if (uniqueNewPosts.length > 0) {
+    await setCachedPosts(sourceId, [...existingPosts, ...uniqueNewPosts]);
+  }
 }
 
 /**
  * Get all cached posts
+ * Iterates through all files in posts directory
  */
 export async function getAllCachedPosts(): Promise<Post[]> {
-  const cache = await readJsonFile<PostsCache>(POSTS_CACHE_FILE, {});
-  return Object.values(cache).flat();
+  await ensureCacheDir();
+  try {
+    const files = await fs.readdir(POSTS_DIR);
+    const allPosts: Post[] = [];
+
+    for (const file of files) {
+      if (file.endsWith('.json')) {
+        const posts = await readJsonFile<Post[]>(path.join(POSTS_DIR, file), []);
+        allPosts.push(...posts);
+      }
+    }
+    return allPosts;
+  } catch (error) {
+    return [];
+  }
 }
 
 /**
@@ -140,7 +149,7 @@ export async function setLastFetchTime(sourceId: string, timestamp: number): Pro
 export async function shouldRefresh(sourceId: string, refreshIntervalHours: number = 6): Promise<boolean> {
   const lastFetch = await getLastFetchTime(sourceId);
   if (!lastFetch) return true;
-  
+
   const now = Date.now();
   const intervalMs = refreshIntervalHours * 60 * 60 * 1000;
   return (now - lastFetch) > intervalMs;

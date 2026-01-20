@@ -2,6 +2,12 @@
  * Data models for the research blog aggregator
  */
 
+export interface SourceCategory {
+  id: string;
+  name: string;
+  url: string;
+}
+
 export interface Source {
   id: string;
   name: string;
@@ -9,6 +15,7 @@ export interface Source {
   rss?: string;
   blogListUrl?: string;
   allowScrape: boolean;
+  categories?: SourceCategory[];
 }
 
 export interface UseCase {
@@ -31,6 +38,9 @@ export interface Post {
   usecases?: UseCase[];
   rawHtml?: string;
   imageUrl?: string; // Header/featured image URL
+  category?: string; // Content category (blog, publication, science, etc.)
+  subCategory?: string; // Sub-category (e.g., "Mathematics & Computer Science")
+  venue?: string; // Publication venue (for academic papers)
   fetchedAt: string;
 }
 
