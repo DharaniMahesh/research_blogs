@@ -8,6 +8,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAllCachedPosts } from '@/lib/cache';
 import { PostsQueryParams } from '@/types';
 
+export const runtime = 'edge';
+
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;

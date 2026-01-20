@@ -10,13 +10,15 @@ import { getCachedSummary, setCachedSummary } from '@/lib/cache';
 import { fetchUrl } from '@/lib/scraper';
 import * as cheerio from 'cheerio';
 
+export const runtime = 'edge';
+
 /**
  * Extract text content from HTML (reuse scraper logic)
  */
 function extractTextFromHtml(html: string): string {
   const $ = cheerio.load(html);
   $('script, style, nav, footer, header, aside, .sidebar, .navigation').remove();
-  
+
   const contentSelectors = [
     'article',
     '.post-content',
@@ -26,7 +28,7 @@ function extractTextFromHtml(html: string): string {
     '.content',
     'main',
   ];
-  
+
   let content = '';
   for (const selector of contentSelectors) {
     const element = $(selector).first();
@@ -35,11 +37,11 @@ function extractTextFromHtml(html: string): string {
       break;
     }
   }
-  
+
   if (!content) {
     content = $('body').text();
   }
-  
+
   return content
     .replace(/\s+/g, ' ')
     .trim()
@@ -75,7 +77,7 @@ export async function POST(request: NextRequest) {
       try {
         const html = await fetchUrl(url);
         postContent = extractTextFromHtml(html);
-        
+
         // Try to extract title if not provided
         if (!postTitle) {
           const $ = cheerio.load(html);

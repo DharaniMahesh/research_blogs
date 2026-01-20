@@ -6,6 +6,8 @@
 import { NextResponse } from 'next/server';
 import { getAllSources } from '@/lib/sources';
 
+export const runtime = 'edge';
+
 export async function GET() {
   try {
     const sources = getAllSources();

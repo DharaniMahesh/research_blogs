@@ -4,11 +4,9 @@
  * Supports lazy pagination for better performance
  */
 
-import Parser from 'rss-parser';
 import * as cheerio from 'cheerio';
 import { Source, Post } from '@/types';
-import { URL } from 'url';
-import https from 'https';
+
 import {
   fetchAppleMLPosts,
   fetchAmazonSciencePosts,
@@ -396,99 +394,73 @@ function extractTitleFromHtml(html: string, fallbackTitle: string): string {
 }
 
 /**
- * Fetch RSS content using Node's https with relaxed SSL (for problematic feeds like Netflix)
+ * Parse RSS content using cheerio (Edge compatible)
  */
-async function fetchRssWithRelaxedSSL(url: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const urlObj = new URL(url);
+function parseRssWithCheerio(xml: string): any {
+  const $ = cheerio.load(xml, { xmlMode: true });
+  const items: any[] = [];
 
-    const options = {
-      hostname: urlObj.hostname,
-      port: urlObj.port || 443,
-      path: urlObj.pathname + urlObj.search,
-      method: 'GET',
-      headers: {
-        'User-Agent': USER_AGENT,
-        'Accept': 'application/rss+xml, application/xml, text/xml, */*',
-      },
-      rejectUnauthorized: process.env.NODE_ENV === 'production',
+  $('item, entry').each((_, elem) => {
+    const $item = $(elem);
+
+    // Extract basic fields
+    const title = $item.find('title').text().trim();
+    const link = $item.find('link').text().trim() || $item.find('link').attr('href');
+    const pubDate = $item.find('pubDate').text().trim() || $item.find('published').text().trim() || $item.find('updated').text().trim();
+    const author = $item.find('author name').text().trim() || $item.find('dc\\:creator').text().trim() || $item.find('creator').text().trim();
+    const content = $item.find('content\\:encoded').text().trim() || $item.find('content').text().trim();
+    const contentSnippet = $item.find('description').text().trim() || $item.find('summary').text().trim();
+
+    // Extract media
+    const mediaThumbnail = {
+      url: $item.find('media\\:thumbnail').attr('url') || $item.find('thumbnail').attr('url')
     };
 
-    const req = https.request(options, (res) => {
-      let data = '';
+    const mediaContent = {
+      url: $item.find('media\\:content').attr('url'),
+      medium: $item.find('media\\:content').attr('medium')
+    };
 
-      res.on('data', (chunk) => {
-        data += chunk;
-      });
+    const enclosure = {
+      url: $item.find('enclosure').attr('url'),
+      type: $item.find('enclosure').attr('type')
+    };
 
-      res.on('end', () => {
-        if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-          resolve(data);
-        } else {
-          reject(new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`));
-        }
-      });
+    items.push({
+      title,
+      link,
+      pubDate,
+      author,
+      content,
+      contentSnippet,
+      mediaThumbnail,
+      mediaContent,
+      enclosure
     });
-
-    req.on('error', (error) => {
-      reject(error);
-    });
-
-    req.end();
   });
+
+  return { items };
 }
 
 /**
  * Fetch posts from RSS feed
  */
 export async function fetchFromRss(rssUrl: string, sourceId: string): Promise<Post[]> {
-  const parser = new Parser({
-    customFields: {
-      item: [
-        'author',
-        'pubDate',
-        ['media:thumbnail', 'mediaThumbnail'],
-        ['media:content', 'mediaContent'],
-      ],
-    },
-  });
-
   try {
     let rssContent: string | null = null;
 
     try {
       rssContent = await fetchUrl(rssUrl);
     } catch (fetchError) {
-      const errorMsg = fetchError instanceof Error ? fetchError.message : String(fetchError);
-
-      const isSSLError = errorMsg.includes('certificate') ||
-        errorMsg.includes('SSL') ||
-        errorMsg.includes('TLS') ||
-        errorMsg.includes('UNABLE_TO_VERIFY') ||
-        errorMsg.includes('fetch failed') ||
-        errorMsg.includes('ECONNRESET');
-
-      if (isSSLError) {
-        console.warn(`SSL issue detected for ${rssUrl}, using relaxed SSL verification...`);
-        try {
-          rssContent = await fetchRssWithRelaxedSSL(rssUrl);
-        } catch (httpsError) {
-          throw new Error(
-            `Unable to fetch RSS feed from ${rssUrl}. ` +
-            `SSL certificate verification failed even with relaxed settings. ` +
-            `This may be a temporary network issue. Original error: ${errorMsg}`
-          );
-        }
-      } else {
-        throw fetchError;
-      }
+      console.error(`Error fetching RSS from ${rssUrl}:`, fetchError);
+      throw fetchError;
     }
 
     if (!rssContent) {
       throw new Error(`Failed to fetch RSS content from ${rssUrl}`);
     }
 
-    const feed = await parser.parseString(rssContent);
+    const feed = parseRssWithCheerio(rssContent);
     return processRssFeed(feed, sourceId);
   } catch (error) {
     console.error(`Error fetching RSS from ${rssUrl}:`, error);
@@ -509,7 +481,13 @@ function processRssFeed(feed: any, sourceId: string): Post[] {
     if (!item.link || !item.title) continue;
 
     // Generate unique ID from URL
-    const urlPath = new URL(item.link).pathname;
+    let urlPath = '';
+    try {
+      urlPath = new URL(item.link).pathname;
+    } catch {
+      urlPath = item.link;
+    }
+
     const urlSlug = urlPath.split('/').filter(Boolean).join('-') || 'post';
     const postId = `${sourceId}-${urlSlug}`;
 
@@ -518,8 +496,8 @@ function processRssFeed(feed: any, sourceId: string): Post[] {
       sourceId,
       title: item.title,
       url: item.link,
-      author: item.creator || item.author || undefined,
-      publishedAt: item.pubDate || item.isoDate || undefined,
+      author: item.author || undefined,
+      publishedAt: item.pubDate || undefined,
       fetchedAt: new Date().toISOString(),
     };
 
@@ -529,27 +507,18 @@ function processRssFeed(feed: any, sourceId: string): Post[] {
     }
 
     // Try to extract image from RSS item
-    // First check for media:thumbnail or media:content (used by DeepMind, etc.)
-    const itemAny = item as any;
-    // Check both original names and renamed custom field names
-    const mediaThumbnail = itemAny.mediaThumbnail?.$ || itemAny.mediaThumbnail ||
-      itemAny['media:thumbnail']?.$ || itemAny['media:thumbnail'];
-    const mediaContent = itemAny.mediaContent?.$ || itemAny.mediaContent ||
-      itemAny['media:content']?.$ || itemAny['media:content'];
-
-    // Extract URL from media elements (can be in .url or .$ attribute object)
-    const thumbnailUrl = mediaThumbnail?.url || mediaThumbnail?.$?.url;
-    const contentUrl = mediaContent?.url || mediaContent?.$?.url;
+    const thumbnailUrl = item.mediaThumbnail?.url;
+    const contentUrl = item.mediaContent?.url;
 
     if (thumbnailUrl) {
       post.imageUrl = thumbnailUrl;
-    } else if (contentUrl && (mediaContent?.medium === 'image' || mediaContent?.$?.medium === 'image')) {
+    } else if (contentUrl && (item.mediaContent?.medium === 'image')) {
       post.imageUrl = contentUrl;
     } else if (item.enclosure?.url && item.enclosure.type?.startsWith('image/')) {
       post.imageUrl = item.enclosure.url;
     } else {
       // Try to extract image from HTML content if available
-      const content = (item as any)['content:encoded'] || item.contentSnippet || item.content;
+      const content = item.content || item.contentSnippet;
       if (content && typeof content === 'string') {
         const $ = cheerio.load(content);
         const img = $('img').first();

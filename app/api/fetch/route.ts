@@ -9,6 +9,8 @@ import { getSourceById } from '@/lib/sources';
 import { fetchPostsFromSource } from '@/lib/scraper';
 import { getCachedPosts, appendCachedPosts, setCachedPosts, setLastFetchTime, shouldRefresh } from '@/lib/cache';
 
+export const runtime = 'edge';
+
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;

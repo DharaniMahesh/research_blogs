@@ -4,41 +4,18 @@
  */
 
 import { NextResponse } from 'next/server';
-import { promises as fs } from 'fs';
-import path from 'path';
 
-const CACHE_DIR = path.join(process.cwd(), '.cache');
-const POSTS_CACHE_FILE = path.join(CACHE_DIR, 'posts.json');
-const SUMMARIES_CACHE_FILE = path.join(CACHE_DIR, 'summaries.json');
-const FETCH_TIMESTAMPS_FILE = path.join(CACHE_DIR, 'fetch-timestamps.json');
+export const runtime = 'edge';
 
 export async function POST() {
   try {
-    // Clear posts cache
-    try {
-      await fs.writeFile(POSTS_CACHE_FILE, JSON.stringify({}), 'utf-8');
-    } catch (error) {
-      // File might not exist, that's okay
-    }
+    // In Edge Runtime (and now locally since we switched to in-memory cache),
+    // we don't have a persistent file cache to clear.
+    // In-memory cache is per-isolate and clears on restart/redeploy.
 
-    // Clear summaries cache
-    try {
-      await fs.writeFile(SUMMARIES_CACHE_FILE, JSON.stringify({}), 'utf-8');
-    } catch (error) {
-      // File might not exist, that's okay
-    }
-
-    // Clear fetch timestamps
-    try {
-      await fs.writeFile(FETCH_TIMESTAMPS_FILE, JSON.stringify({}), 'utf-8');
-    } catch (error) {
-      // File might not exist, that's okay
-    }
-
-    return NextResponse.json({ 
+    return NextResponse.json({
       success: true,
-      message: 'Cache cleared successfully',
-      cacheLocation: CACHE_DIR,
+      message: 'Cache cleared (In-memory cache reset)',
     });
   } catch (error) {
     console.error('Error clearing cache:', error);
@@ -50,28 +27,8 @@ export async function POST() {
 }
 
 export async function GET() {
-  try {
-    // Return cache info
-    const cacheInfo = {
-      cacheLocation: CACHE_DIR,
-      files: [
-        { name: 'posts.json', path: POSTS_CACHE_FILE },
-        { name: 'summaries.json', path: SUMMARIES_CACHE_FILE },
-        { name: 'fetch-timestamps.json', path: FETCH_TIMESTAMPS_FILE },
-      ],
-      instructions: {
-        clearViaAPI: 'POST /api/cache/clear',
-        clearViaCLI: 'rm -rf .cache/',
-        clearViaCode: 'Delete the .cache/ directory in your project root',
-      },
-    };
-
-    return NextResponse.json(cacheInfo);
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to get cache info' },
-      { status: 500 }
-    );
-  }
+  return NextResponse.json({
+    message: 'Send a POST request to clear the cache',
+    runtime: process.env.NEXT_RUNTIME || 'node',
+  });
 }
-
