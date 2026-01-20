@@ -1563,7 +1563,7 @@ export async function fetchLinkedInEngineeringPosts(
 
                 if (!author) {
                     author = $('.author-name').first().text().trim() ||
-                        $('meta[name="author"]').attr('content');
+                        $('meta[name="author"]').attr('content') || '';
                 }
 
                 // Date
