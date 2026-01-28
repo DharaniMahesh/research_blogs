@@ -25,6 +25,7 @@ import {
   fetchSpotifyEngineeringPosts,
   fetchStripeEngineeringPosts,
   fetchUberEngineeringPosts,
+  fetchByteByteGoPosts,
 } from './custom-scrapers';
 
 // Use a realistic browser user agent to avoid blocking
@@ -1487,6 +1488,11 @@ export async function fetchPostsFromSource(
     // Custom Uber Engineering Scraper
     if (source.id === 'uber-engineering') {
       return await fetchUberEngineeringPosts(source.id, fetchUrl, options);
+    }
+
+    // Custom ByteByteGo Scraper
+    if (source.id === 'bytebytego') {
+      return await fetchByteByteGoPosts(source.id, fetchUrl, options);
     }
 
     // Try RSS first

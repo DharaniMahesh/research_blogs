@@ -152,6 +152,13 @@ export const defaultSources: Source[] = [
     rss: 'https://blog.cloudflare.com/rss/',
     allowScrape: true,
   },
+  {
+    id: 'bytebytego',
+    name: 'ByteByteGo',
+    homepage: 'https://blog.bytebytego.com/',
+    rss: 'https://blog.bytebytego.com/feed',
+    allowScrape: true,
+  },
 ];
 
 /**

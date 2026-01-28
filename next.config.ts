@@ -289,6 +289,12 @@ const nextConfig: NextConfig = {
         port: '',
         pathname: '/**',
       },
+      {
+        protocol: 'https',
+        hostname: 'substackcdn.com',
+        port: '',
+        pathname: '/**',
+      },
     ],
   },
 };

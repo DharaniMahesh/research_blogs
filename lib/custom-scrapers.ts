@@ -2427,53 +2427,70 @@ export async function fetchUberEngineeringPosts(
             // Extract Image
             // Image is usually in a sibling div or inside the link
             const parent = $el.closest('div');
-            let imageUrl = parent.find('img').attr('src') || $el.find('img').attr('src');
+            let imageUrl = parent.find('img').attr('src');
 
-            // Extract Date
-            // Date is usually text in the parent container
-            const parentText = parent.text();
-            const dateMatch = parentText.match(/(\d{1,2}\s+[A-Za-z]+)|([A-Za-z]+\s+\d{1,2})/);
-            let dateStr = dateMatch ? dateMatch[0] : undefined;
-
-            let publishedAt = new Date().toISOString();
-            if (dateStr) {
-                try {
-                    if (!dateStr.match(/\d{4}/)) {
-                        dateStr += ` ${new Date().getFullYear()}`;
-                    }
-                    const parsedDate = new Date(dateStr);
-                    if (!isNaN(parsedDate.getTime())) {
-                        publishedAt = parsedDate.toISOString();
-                    }
-                } catch (e) { }
+            // If not found, try looking inside the link
+            if (!imageUrl) {
+                imageUrl = $el.find('img').attr('src');
             }
 
-            // If we have a valid title and link, add it
-            // If we have a valid title and link, and a date (to filter out nav links), add it
-            if (title && fullUrl && dateStr) {
-                const id = `${sourceId}-${slug}`;
+            // If still not found, try looking in the previous sibling
+            if (!imageUrl) {
+                const prev = parent.prev();
+                imageUrl = prev.find('img').attr('src');
+            }
 
-                // Avoid duplicates
-                if (!allPostsMap.has(id)) {
-                    allPostsMap.set(id, {
-                        id,
-                        sourceId,
-                        title,
-                        url: fullUrl,
-                        imageUrl,
-                        publishedAt,
-                        author: 'Uber Engineering',
-                        fetchedAt: new Date().toISOString(),
-                    });
+            if (imageUrl) {
+                // Resolve relative URLs
+                try {
+                    imageUrl = new URL(imageUrl, 'https://www.uber.com').toString();
+                } catch {
+                    // Ignore
+                }
+            }
+
+            // Extract Date
+            // Date is usually in a sibling div or text node
+            // We tried to strip it from title, but we should also try to capture it
+            let publishedAt: string | undefined;
+            const dateMatch = text.match(/([A-Z][a-z]+\s+\d{1,2},?\s+\d{4})/);
+            if (dateMatch) {
+                try {
+                    const date = new Date(dateMatch[1]);
+                    if (!isNaN(date.getTime())) {
+                        publishedAt = date.toISOString();
+                    }
+                } catch {
+                    // Ignore
+                }
+            }
+
+            if (title && title.length > 5 && fullUrl) {
+                try {
+                    const postUrl = new URL(fullUrl).toString();
+                    const id = `${sourceId}-${slug}`;
+
+                    // Avoid duplicates
+                    if (!allPostsMap.has(id)) {
+                        allPostsMap.set(id, {
+                            id,
+                            sourceId,
+                            title,
+                            url: postUrl,
+                            publishedAt,
+                            imageUrl,
+                            author: 'Uber Engineering',
+                            fetchedAt: new Date().toISOString(),
+                        });
+                    }
+                } catch {
+                    // Ignore
                 }
             }
         });
 
         const allPosts = Array.from(allPostsMap.values());
         console.log(`[${sourceId}] Extracted ${allPosts.length} unique posts from HTML.`);
-
-        // Sort by date (heuristic, as dates might be missing or partial)
-        // If dates are missing, we rely on the order on the page (usually new to old)
 
         // Paginate in memory
         const startIndex = (page - 1) * maxPostsPerPage;
@@ -2489,8 +2506,76 @@ export async function fetchUberEngineeringPosts(
         };
 
     } catch (error) {
-        console.error(`[${sourceId}] Error fetching Uber posts:`, error);
+        console.error(`[${sourceId}] Error fetching Uber Engineering posts:`, error);
         return { posts: [], hasMore: false };
     }
 }
 
+/**
+ * Custom scraper for ByteByteGo (Substack)
+ * Uses the internal API for reliable pagination
+ */
+export async function fetchByteByteGoPosts(
+    sourceId: string,
+    fetchUrl: (url: string) => Promise<string>,
+    options: { page?: number; maxPostsPerPage?: number } = {}
+): Promise<{ posts: Post[]; hasMore: boolean; nextPageUrl?: string; detectedPattern?: string | null }> {
+    const page = options.page || 1;
+    const limit = options.maxPostsPerPage || 12;
+    const offset = (page - 1) * limit;
+
+    const apiUrl = `https://blog.bytebytego.com/api/v1/archive?sort=new&search=&offset=${offset}&limit=${limit}`;
+
+    try {
+        console.log(`[${sourceId}] Fetching API: ${apiUrl}`);
+        const jsonText = await fetchUrl(apiUrl);
+        const data = JSON.parse(jsonText);
+
+        if (!Array.isArray(data)) {
+            throw new Error('API response is not an array');
+        }
+
+        const posts: Post[] = data.map((item: any) => {
+            const url = item.canonical_url || `https://blog.bytebytego.com/p/${item.slug}`;
+            const title = item.title;
+            const summary = item.description || item.subtitle;
+            const imageUrl = item.cover_image;
+            const publishedAt = item.post_date ? new Date(item.post_date).toISOString() : undefined;
+
+            const urlPath = new URL(url).pathname;
+            const urlSlug = urlPath.split('/').filter(Boolean).join('-') || 'post';
+            const postId = `${sourceId}-${urlSlug}`;
+
+            return {
+                id: postId,
+                sourceId,
+                title,
+                url,
+                summary,
+                imageUrl,
+                publishedAt,
+                author: 'ByteByteGo',
+                fetchedAt: new Date().toISOString(),
+            };
+        });
+
+        // Substack always returns the requested limit if there are more posts
+        // If we got fewer than limit, we reached the end
+        const hasMore = posts.length === limit;
+
+        // Construct "next page" URL for our internal logic (though we construct API url manually)
+        // We just return a dummy one to trigger the next fetch if hasMore is true
+        const nextPageUrl = hasMore ? `https://blog.bytebytego.com/archive?page=${page + 1}` : undefined;
+
+        return {
+            posts,
+            hasMore,
+            nextPageUrl,
+            detectedPattern: null
+        };
+
+    } catch (error) {
+        console.error(`[${sourceId}] Error fetching ByteByteGo posts:`, error);
+        return { posts: [], hasMore: false };
+    }
+}
