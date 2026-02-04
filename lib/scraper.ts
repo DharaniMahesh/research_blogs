@@ -26,6 +26,7 @@ import {
   fetchStripeEngineeringPosts,
   fetchUberEngineeringPosts,
   fetchByteByteGoPosts,
+  fetchF5Posts,
 } from './custom-scrapers';
 
 // Use a realistic browser user agent to avoid blocking
@@ -1493,6 +1494,11 @@ export async function fetchPostsFromSource(
     // Custom ByteByteGo Scraper
     if (source.id === 'bytebytego') {
       return await fetchByteByteGoPosts(source.id, fetchUrl, options);
+    }
+
+    // Custom F5 Scraper
+    if (source.id === 'f5-blog') {
+      return await fetchF5Posts(source.id, fetchUrl, options);
     }
 
     // Try RSS first

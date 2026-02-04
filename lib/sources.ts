@@ -159,6 +159,13 @@ export const defaultSources: Source[] = [
     rss: 'https://blog.bytebytego.com/feed',
     allowScrape: true,
   },
+  {
+    id: 'f5-blog',
+    name: 'F5 Company Blog',
+    homepage: 'https://www.f5.com/company/blog',
+    // No RSS feed found, using custom scraper
+    allowScrape: true,
+  },
 ];
 
 /**

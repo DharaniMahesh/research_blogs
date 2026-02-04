@@ -2579,3 +2579,178 @@ export async function fetchByteByteGoPosts(
         return { posts: [], hasMore: false };
     }
 }
+
+/**
+ * Custom scraper for F5 Company Blog
+ * Extracts data from serialized Next.js/React script tags using robust regex
+ */
+
+// ============================================================================
+// F5 BLOG SCRAPER
+// ============================================================================
+
+// Cache for F5 posts to support virtual pagination
+let f5PostsCache: { posts: Post[]; fetchedAt: number } | null = null;
+const F5_CACHE_TTL = 60 * 60 * 1000; // 1 hour cache
+
+/**
+ * Custom scraper for F5 Company Blog
+ * Extracts URLs/Titles from script tags, then enriches with images from individual pages (on-demand)
+ */
+export async function fetchF5Posts(
+    sourceId: string,
+    fetchUrl: (url: string) => Promise<string>,
+    options: { page?: number; maxPostsPerPage?: number } = {}
+): Promise<{ posts: Post[]; hasMore: boolean; nextPageUrl?: string; detectedPattern?: string | null }> {
+    const { page = 1, maxPostsPerPage = 10 } = options;
+    const url = 'https://www.f5.com/company/blog';
+
+    console.log(`[${sourceId}] Fetching F5 page ${page} (${maxPostsPerPage} per page)`);
+
+    let allPosts: Post[] = [];
+
+    // 1. Get List (Cached or Fresh)
+    if (f5PostsCache && (Date.now() - f5PostsCache.fetchedAt) < F5_CACHE_TTL) {
+        console.log(`[${sourceId}] Using cached F5 posts (${f5PostsCache.posts.length} total)`);
+        allPosts = f5PostsCache.posts;
+    } else {
+        try {
+            console.log(`[${sourceId}] Fetching fresh content from ${url}...`);
+            const html = await fetchUrl(url);
+
+            // Find all script content that might contain our data
+            let scriptContent = '';
+            const $ = cheerio.load(html);
+            $('script').each((_, el) => {
+                const content = $(el).html() || '';
+                if (content.includes('/company/blog/')) {
+                    scriptContent += content;
+                }
+            });
+
+            if (!scriptContent) scriptContent = html; // Fallback to full HTML
+
+            // Regex to split content by blog path
+            const sections = scriptContent.split('/company/blog/');
+
+            const posts: Post[] = [];
+            const seenUrls = new Set<string>();
+
+            // Skip first section
+            for (let i = 1; i < sections.length; i++) {
+                const section = sections[i];
+
+                // The characters immediately following the split point should be the slug
+                const slugMatch = section.match(/^([^"\\&?]+)/);
+                if (!slugMatch) continue;
+
+                let slug = slugMatch[1];
+
+                // Filter out non-post paths
+                if (slug.includes('tags/') || slug.includes('pillar/') || slug.includes('author/') || slug.includes('page-') || slug.length < 3) continue;
+
+                // Construct full URL
+                const postUrl = `https://www.f5.com/company/blog/${slug}`;
+
+                // Search for title (alt) in this section
+                const searchRegion = section.substring(0, 5000);
+
+                // Match "alt":"Value" OR \"alt\":\"Value\"
+                const titleMatch = searchRegion.match(/\\?"alt\\?":\\?"([^"]+)\\?"/);
+                const titleFallbackMatch = searchRegion.match(/\\?"title\\?":\\?"([^"]+)\\?"/);
+
+                let title = '';
+                if (titleMatch) title = titleMatch[1];
+                else if (titleFallbackMatch) title = titleFallbackMatch[1];
+
+                if (title) title = title.replace(/\\"/g, '"').replace(/\\+$/, '').trim();
+
+                if (title && title.length > 5) {
+                    if (title.includes('.png') || title.includes('.jpg') || title === 'Image') continue;
+                    if (seenUrls.has(postUrl)) continue;
+
+                    const urlPath = new URL(postUrl).pathname;
+                    const urlSlug = urlPath.split('/').filter(Boolean).join('-') || 'post';
+                    const postId = `${sourceId}-${urlSlug}`;
+
+                    posts.push({
+                        id: postId,
+                        sourceId,
+                        title,
+                        url: postUrl,
+                        // imageUrl: undefined, // Will fetch later
+                        fetchedAt: new Date().toISOString(),
+                        author: 'F5', // Default author
+                    });
+                    seenUrls.add(postUrl);
+                }
+            }
+
+            console.log(`[${sourceId}] Extracted ${posts.length} unique posts`);
+            allPosts = posts;
+            f5PostsCache = { posts: allPosts, fetchedAt: Date.now() };
+
+        } catch (error) {
+            console.error(`[${sourceId}] Error fetching F5 posts:`, error);
+            allPosts = [];
+        }
+    }
+
+    // 2. Pagination
+    const startIndex = (page - 1) * maxPostsPerPage;
+    const endIndex = startIndex + maxPostsPerPage;
+    const pagePosts = allPosts.slice(startIndex, endIndex);
+    const hasMore = endIndex < allPosts.length;
+    const nextPageUrl = hasMore ? `${url}?page=${page + 1}` : undefined;
+
+    // 3. Enrich with Images (Parallel Fetch)
+    console.log(`[${sourceId}] Enriching ${pagePosts.length} posts with images...`);
+
+    // We only fetch if we don't have an image yet
+    const postsNeedingImage = pagePosts.filter(p => !p.imageUrl);
+
+    if (postsNeedingImage.length > 0) {
+        // Limit concurrency
+        const CONCURRENCY = 5;
+        for (let i = 0; i < postsNeedingImage.length; i += CONCURRENCY) {
+            const batch = postsNeedingImage.slice(i, i + CONCURRENCY);
+            await Promise.all(batch.map(async (post) => {
+                try {
+                    // Quick fetch of the post page
+                    const html = await fetchUrl(post.url);
+                    const $ = cheerio.load(html);
+
+                    // Extract OG Image
+                    let img = $('meta[property="og:image"]').attr('content');
+
+                    // Fallback to Sanity image regex in HTML if meta missing
+                    if (!img) {
+                        const match = html.match(/"url":"(https:\/\/cdn\.sanity\.io\/images\/[^"]+)"/);
+                        if (match) img = match[1];
+                    }
+
+                    if (img && img.startsWith('http')) {
+                        post.imageUrl = img;
+                        // Determine author if possible
+                        const author = $('meta[name="author"]').attr('content');
+                        if (author) post.author = author;
+                    }
+                } catch (e) {
+                    console.warn(`[${sourceId}] Failed to fetch image for ${post.url}`);
+                }
+            }));
+        }
+
+        // Update cache with the new images
+        if (f5PostsCache) {
+            f5PostsCache.fetchedAt = Date.now();
+        }
+    }
+
+    return {
+        posts: pagePosts,
+        hasMore,
+        nextPageUrl,
+        detectedPattern: 'regex-list-plus-detail-enrichment'
+    };
+}
