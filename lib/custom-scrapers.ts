@@ -165,6 +165,7 @@ export async function fetchAmazonSciencePosts(
     sourceId: string,
     rssUrl: string,
     fetchFromRss: FetchFromRssFn,
+    fetchUrl: FetchUrlFn,
     options: { page?: number; maxPostsPerPage?: number } = {}
 ): Promise<{ posts: Post[]; hasMore: boolean; nextPageUrl?: string; detectedPattern?: string | null }> {
     const { page = 1, maxPostsPerPage = 10 } = options;
@@ -203,11 +204,33 @@ export async function fetchAmazonSciencePosts(
         const hasMore = endIndex < allPosts.length;
         const totalPages = Math.ceil(allPosts.length / maxPostsPerPage);
 
-        console.log(`[${sourceId}] Amazon Science page ${page}/${totalPages}: Returning ${pagePosts.length} posts (${startIndex}-${endIndex} of ${allPosts.length}), hasMore: ${hasMore}`);
-
-        if (pagePosts.length > 0) {
-            console.log(`[${sourceId}] First post: "${pagePosts[0].title}" (${pagePosts[0].url})`);
+        // Amazon Science RSS no longer ships images. Enrich missing ones via og:image.
+        const needsImage = pagePosts.filter(p => !p.imageUrl);
+        if (needsImage.length > 0) {
+            const CONCURRENCY = 5;
+            for (let i = 0; i < needsImage.length; i += CONCURRENCY) {
+                const batch = needsImage.slice(i, i + CONCURRENCY);
+                await Promise.all(batch.map(async (post) => {
+                    try {
+                        const html = await fetchUrl(post.url);
+                        const $ = cheerio.load(html);
+                        let img = $('meta[property="og:image"]').attr('content') ||
+                            $('meta[name="twitter:image"]').attr('content');
+                        if (img) {
+                            if (img.startsWith('http://')) img = img.replace('http://', 'https://');
+                            post.imageUrl = img;
+                        }
+                    } catch { /* skip */ }
+                }));
+            }
+            // Persist enrichment back into the full cache
+            if (amazonSciencePostsCache) {
+                const byId = new Map(pagePosts.map(p => [p.id, p]));
+                amazonSciencePostsCache.posts = amazonSciencePostsCache.posts.map(p => byId.get(p.id) || p);
+            }
         }
+
+        console.log(`[${sourceId}] Amazon Science page ${page}/${totalPages}: ${pagePosts.length} posts (${startIndex}-${endIndex} of ${allPosts.length}), hasMore: ${hasMore}`);
 
         return {
             posts: pagePosts,
@@ -1881,90 +1904,90 @@ export async function fetchNetflixResearchPosts(
 // NVIDIA DEVELOPER SCRAPER
 // ============================================================================
 
+// Edge-compatible: parses Atom feed via cheerio (no Node stream/rss-parser).
+// NVIDIA's Atom feed embeds the featured image inside <summary>/<content>
+// HTML, so we extract from there and skip per-post page fetches.
+
+let nvidiaPostsCache: { posts: Post[]; fetchedAt: number } | null = null;
+const NVIDIA_CACHE_TTL = 30 * 60 * 1000; // 30 min
+
 export async function fetchNvidiaDeveloperPosts(
     sourceId: string,
     fetchUrl: FetchUrlFn,
     options: { page?: number; maxPostsPerPage?: number } = {}
 ): Promise<{ posts: Post[]; hasMore: boolean; nextPageUrl?: string; detectedPattern?: string | null }> {
-    const { page = 1 } = options;
+    const { page = 1, maxPostsPerPage = 10 } = options;
     const rssUrl = 'https://developer.nvidia.com/blog/feed/';
 
-    console.log(`[${sourceId}] Fetching NVIDIA Developer posts from RSS...`);
+    let allPosts: Post[] = [];
 
-    try {
-        // Dynamic import to avoid circular dependency
-        const Parser = (await import('rss-parser')).default;
-        const parser = new Parser();
-        const feed = await parser.parseURL(rssUrl);
+    if (nvidiaPostsCache && (Date.now() - nvidiaPostsCache.fetchedAt) < NVIDIA_CACHE_TTL) {
+        allPosts = nvidiaPostsCache.posts;
+    } else {
+        console.log(`[${sourceId}] Fetching NVIDIA Atom feed...`);
+        try {
+            const xml = await fetchUrl(rssUrl);
+            const $ = cheerio.load(xml, { xmlMode: true });
 
-        const items = feed.items;
+            $('entry').each((_, el) => {
+                const $entry = $(el);
+                const title = $entry.find('title').first().text().trim();
+                // Atom may have multiple <link> elements; pick rel="alternate"
+                const $altLink = $entry.find('link[rel="alternate"]').first();
+                const link = ($altLink.length ? $altLink.attr('href') : $entry.find('link').first().attr('href')) || '';
 
-        // Manual pagination
-        const postsPerPage = options.maxPostsPerPage || 10;
-        const startIndex = (page - 1) * postsPerPage;
-        const endIndex = startIndex + postsPerPage;
+                if (!title || !link) return;
 
-        const pageItems = items.slice(startIndex, endIndex);
-        const hasMore = endIndex < items.length;
+                const published = $entry.find('published').first().text().trim() ||
+                    $entry.find('updated').first().text().trim();
+                const author = $entry.find('author name').first().text().trim() || 'NVIDIA';
 
-        console.log(`[${sourceId}] Processing ${pageItems.length} items for page ${page}`);
-
-        const posts: Post[] = [];
-
-        // Process items in parallel to fetch images
-        // Limit concurrency to avoid overwhelming the server
-        const CONCURRENCY_LIMIT = 5;
-        for (let i = 0; i < pageItems.length; i += CONCURRENCY_LIMIT) {
-            const chunk = pageItems.slice(i, i + CONCURRENCY_LIMIT);
-            await Promise.all(chunk.map(async (item) => {
-                if (!item.link || !item.title) return;
-
+                // Extract first <img src=""> from the embedded HTML in <summary>/<content>
                 let imageUrl: string | undefined;
-
-                try {
-                    // Fetch the page to get og:image
-                    const html = await fetchUrl(item.link);
-                    const $ = cheerio.load(html);
-                    imageUrl = $('meta[property="og:image"]').attr('content') ||
-                        $('meta[name="twitter:image"]').attr('content');
-
-                    if (imageUrl) {
-                        // Ensure https
-                        if (imageUrl.startsWith('http://')) {
-                            imageUrl = imageUrl.replace('http://', 'https://');
-                        }
+                const html = $entry.find('summary').first().text() || $entry.find('content').first().text();
+                if (html) {
+                    const m = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+                    if (m) {
+                        imageUrl = m[1].startsWith('http://')
+                            ? m[1].replace('http://', 'https://')
+                            : m[1];
                     }
-                } catch (err) {
-                    console.warn(`[${sourceId}] Failed to fetch image for ${item.link}:`, err);
                 }
 
-                posts.push({
-                    id: `${sourceId}-${item.link.split('/').filter(Boolean).pop() || item.title.replace(/\s+/g, '-').toLowerCase().slice(0, 50)}`,
+                const slug = link.split('/').filter(Boolean).pop() || title.replace(/\s+/g, '-').toLowerCase().slice(0, 50);
+
+                allPosts.push({
+                    id: `${sourceId}-${slug}`,
                     sourceId,
-                    title: item.title,
-                    url: item.link,
+                    title,
+                    url: link,
                     imageUrl,
-                    publishedAt: item.pubDate ? new Date(item.pubDate).toISOString() : new Date().toISOString(),
-                    author: item.creator || 'NVIDIA',
+                    publishedAt: published ? new Date(published).toISOString() : new Date().toISOString(),
+                    author,
                     fetchedAt: new Date().toISOString(),
                 });
-            }));
+            });
+
+            allPosts.sort((a, b) => new Date(b.publishedAt!).getTime() - new Date(a.publishedAt!).getTime());
+            nvidiaPostsCache = { posts: allPosts, fetchedAt: Date.now() };
+            console.log(`[${sourceId}] Parsed ${allPosts.length} NVIDIA posts from Atom feed`);
+        } catch (error) {
+            console.error(`[${sourceId}] Error fetching NVIDIA posts:`, error);
+            return { posts: [], hasMore: false };
         }
-
-        // Sort by date descending
-        posts.sort((a, b) => new Date(b.publishedAt!).getTime() - new Date(a.publishedAt!).getTime());
-
-        return {
-            posts,
-            hasMore,
-            nextPageUrl: hasMore ? `?page=${page + 1}` : undefined,
-            detectedPattern: 'rss-with-html-enrichment',
-        };
-
-    } catch (error) {
-        console.error(`[${sourceId}] Error fetching NVIDIA posts:`, error);
-        return { posts: [], hasMore: false };
     }
+
+    const start = (page - 1) * maxPostsPerPage;
+    const end = start + maxPostsPerPage;
+    const pagePosts = allPosts.slice(start, end);
+    const hasMore = end < allPosts.length;
+
+    return {
+        posts: pagePosts,
+        hasMore,
+        nextPageUrl: hasMore ? `?page=${page + 1}` : undefined,
+        detectedPattern: 'atom-cheerio',
+    };
 }
 
 // ============================================================================
@@ -2595,7 +2618,8 @@ const F5_CACHE_TTL = 60 * 60 * 1000; // 1 hour cache
 
 /**
  * Custom scraper for F5 Company Blog
- * Extracts URLs/Titles from script tags, then enriches with images from individual pages (on-demand)
+ * RE-IMPLEMENTED: Uses standard HTML scraping instead of fragile JSON regex.
+ * The page is SSR/SEO-friendly, so we can just parse <a> tags.
  */
 export async function fetchF5Posts(
     sourceId: string,
@@ -2617,76 +2641,105 @@ export async function fetchF5Posts(
         try {
             console.log(`[${sourceId}] Fetching fresh content from ${url}...`);
             const html = await fetchUrl(url);
-
-            // Find all script content that might contain our data
-            let scriptContent = '';
             const $ = cheerio.load(html);
-            $('script').each((_, el) => {
-                const content = $(el).html() || '';
-                if (content.includes('/company/blog/')) {
-                    scriptContent += content;
+
+            const postsMap = new Map<string, Partial<Post>>();
+            const seenTitles = new Map<string, string>(); // normalized title -> canonical url (for slug-redirect dedup)
+
+            // Resolve _next/image proxy URLs back to original CDN URL so Next/Image
+            // can load them through our remotePatterns (cdn.studio.f5.com).
+            const unwrapNextImage = (src: string): string => {
+                try {
+                    if (src.includes('/_next/image')) {
+                        const u = new URL(src.startsWith('http') ? src : `https://www.f5.com${src}`);
+                        const inner = u.searchParams.get('url');
+                        if (inner) return decodeURIComponent(inner);
+                    }
+                } catch { /* fall through */ }
+                return src;
+            };
+
+            $('a[href*="/company/blog/"]').each((_, el) => {
+                const $el = $(el);
+                const href = $el.attr('href');
+                if (!href) return;
+
+                const fullUrl = href.startsWith('http') ? href : `https://www.f5.com${href}`;
+
+                // Filter out tags, authors, listing pages
+                if (
+                    fullUrl.includes('/tags/') ||
+                    fullUrl.includes('/pillar/') ||
+                    fullUrl.includes('/author/') ||
+                    fullUrl.includes('/authors/') ||
+                    fullUrl.includes('/page-') ||
+                    fullUrl.endsWith('/company/blog') ||
+                    fullUrl.endsWith('/company/blog/')
+                ) return;
+
+                if (!postsMap.has(fullUrl)) postsMap.set(fullUrl, { url: fullUrl });
+                const entry = postsMap.get(fullUrl)!;
+
+                // Title: prefer short, clean link text. The wrapper anchor often has
+                // empty/long text; the dedicated title anchor (hover:underline class)
+                // has clean text. We only accept text that has NO nested <a>, so we
+                // skip wrapper anchors that contain mixed content from multiple posts.
+                if ($el.find('a').length === 0) {
+                    const text = $el.text().trim();
+                    const lower = text.toLowerCase();
+                    const isJunk = ['read more', 'learn more', 'arrow', '>'].includes(lower);
+                    if (text && text.length > 5 && text.length < 250 && !isJunk) {
+                        // Prefer first valid title; only overwrite if previous was longer
+                        // (catches cases where wrapper text leaked in earlier).
+                        if (!entry.title || entry.title.length > text.length * 1.5) {
+                            entry.title = text;
+                        }
+                    }
+                }
+
+                // Image: only accept an <img> whose nearest <a> ancestor is THIS anchor
+                // (prevents bleed from nested cards/related-posts inside wrapper anchors).
+                if (!entry.imageUrl) {
+                    $el.find('img').each((_, imgEl) => {
+                        if (entry.imageUrl) return;
+                        const $img = $(imgEl);
+                        const closestA = $img.parents('a').first();
+                        if (closestA.length && closestA[0] !== el) return; // belongs to nested anchor
+                        let imgSrc = $img.attr('src') || $img.attr('data-src');
+                        if (!imgSrc) return;
+                        if (imgSrc.includes('spacer') || imgSrc.includes('logo') ||
+                            imgSrc.includes('default-blog-image')) return;
+                        if (imgSrc.startsWith('//')) imgSrc = 'https:' + imgSrc;
+                        else if (imgSrc.startsWith('/')) imgSrc = 'https://www.f5.com' + imgSrc;
+                        entry.imageUrl = unwrapNextImage(imgSrc);
+                    });
                 }
             });
 
-            if (!scriptContent) scriptContent = html; // Fallback to full HTML
-
-            // Regex to split content by blog path
-            const sections = scriptContent.split('/company/blog/');
-
+            // Build posts; dedupe slug-variant URLs (F5 ships 308 redirects between
+            // near-identical slugs e.g. scanning-for-... vs scanning-...) by title.
             const posts: Post[] = [];
-            const seenUrls = new Set<string>();
+            for (const [postUrl, entry] of postsMap.entries()) {
+                if (!entry.title) continue;
+                const titleKey = entry.title.toLowerCase().replace(/\s+/g, ' ').trim();
+                if (seenTitles.has(titleKey)) continue;
+                seenTitles.set(titleKey, postUrl);
 
-            // Skip first section
-            for (let i = 1; i < sections.length; i++) {
-                const section = sections[i];
+                const urlPath = new URL(postUrl).pathname;
+                const urlSlug = urlPath.split('/').filter(Boolean).join('-') || 'post';
 
-                // The characters immediately following the split point should be the slug
-                const slugMatch = section.match(/^([^"\\&?]+)/);
-                if (!slugMatch) continue;
-
-                let slug = slugMatch[1];
-
-                // Filter out non-post paths
-                if (slug.includes('tags/') || slug.includes('pillar/') || slug.includes('author/') || slug.includes('page-') || slug.length < 3) continue;
-
-                // Construct full URL
-                const postUrl = `https://www.f5.com/company/blog/${slug}`;
-
-                // Search for title (alt) in this section
-                const searchRegion = section.substring(0, 5000);
-
-                // Match "alt":"Value" OR \"alt\":\"Value\"
-                const titleMatch = searchRegion.match(/\\?"alt\\?":\\?"([^"]+)\\?"/);
-                const titleFallbackMatch = searchRegion.match(/\\?"title\\?":\\?"([^"]+)\\?"/);
-
-                let title = '';
-                if (titleMatch) title = titleMatch[1];
-                else if (titleFallbackMatch) title = titleFallbackMatch[1];
-
-                if (title) title = title.replace(/\\"/g, '"').replace(/\\+$/, '').trim();
-
-                if (title && title.length > 5) {
-                    if (title.includes('.png') || title.includes('.jpg') || title === 'Image') continue;
-                    if (seenUrls.has(postUrl)) continue;
-
-                    const urlPath = new URL(postUrl).pathname;
-                    const urlSlug = urlPath.split('/').filter(Boolean).join('-') || 'post';
-                    const postId = `${sourceId}-${urlSlug}`;
-
-                    posts.push({
-                        id: postId,
-                        sourceId,
-                        title,
-                        url: postUrl,
-                        // imageUrl: undefined, // Will fetch later
-                        fetchedAt: new Date().toISOString(),
-                        author: 'F5', // Default author
-                    });
-                    seenUrls.add(postUrl);
-                }
+                posts.push({
+                    id: `${sourceId}-${urlSlug}`,
+                    sourceId,
+                    title: entry.title,
+                    url: postUrl,
+                    imageUrl: entry.imageUrl,
+                    fetchedAt: new Date().toISOString(),
+                    author: 'F5',
+                });
             }
 
-            console.log(`[${sourceId}] Extracted ${posts.length} unique posts`);
+            console.log(`[${sourceId}] Extracted ${posts.length} unique posts via HTML`);
             allPosts = posts;
             f5PostsCache = { posts: allPosts, fetchedAt: Date.now() };
 
@@ -2703,54 +2756,31 @@ export async function fetchF5Posts(
     const hasMore = endIndex < allPosts.length;
     const nextPageUrl = hasMore ? `${url}?page=${page + 1}` : undefined;
 
-    // 3. Enrich with Images (Parallel Fetch)
-    console.log(`[${sourceId}] Enriching ${pagePosts.length} posts with images...`);
-
-    // We only fetch if we don't have an image yet
+    // 3. Fallback Enrichment
     const postsNeedingImage = pagePosts.filter(p => !p.imageUrl);
-
     if (postsNeedingImage.length > 0) {
-        // Limit concurrency
+        console.log(`[${sourceId}] Enriching ${postsNeedingImage.length} posts with images...`);
         const CONCURRENCY = 5;
         for (let i = 0; i < postsNeedingImage.length; i += CONCURRENCY) {
             const batch = postsNeedingImage.slice(i, i + CONCURRENCY);
             await Promise.all(batch.map(async (post) => {
                 try {
-                    // Quick fetch of the post page
                     const html = await fetchUrl(post.url);
                     const $ = cheerio.load(html);
-
-                    // Extract OG Image
                     let img = $('meta[property="og:image"]').attr('content');
-
-                    // Fallback to Sanity image regex in HTML if meta missing
-                    if (!img) {
-                        const match = html.match(/"url":"(https:\/\/cdn\.sanity\.io\/images\/[^"]+)"/);
-                        if (match) img = match[1];
-                    }
-
                     if (img && img.startsWith('http')) {
                         post.imageUrl = img;
-                        // Determine author if possible
-                        const author = $('meta[name="author"]').attr('content');
-                        if (author) post.author = author;
                     }
-                } catch (e) {
-                    console.warn(`[${sourceId}] Failed to fetch image for ${post.url}`);
-                }
+                } catch (e) { /* ignore */ }
             }));
         }
-
-        // Update cache with the new images
-        if (f5PostsCache) {
-            f5PostsCache.fetchedAt = Date.now();
-        }
+        if (f5PostsCache) f5PostsCache.fetchedAt = Date.now();
     }
 
     return {
         posts: pagePosts,
         hasMore,
         nextPageUrl,
-        detectedPattern: 'regex-list-plus-detail-enrichment'
+        detectedPattern: 'html-link-aggregation'
     };
 }

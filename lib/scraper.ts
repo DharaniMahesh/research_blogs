@@ -1356,7 +1356,7 @@ export async function fetchPostsFromSource(
 
     // Custom Amazon Science scraper - uses RSS with client-side pagination
     if (source.id === 'amazon-science' && source.rss) {
-      return await fetchAmazonSciencePosts(source.id, source.rss, fetchFromRss, {
+      return await fetchAmazonSciencePosts(source.id, source.rss, fetchFromRss, fetchUrl, {
         page: options.page || 1,
         maxPostsPerPage: 10
       });

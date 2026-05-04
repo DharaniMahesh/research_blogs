@@ -41,11 +41,11 @@ describe('Scraper', () => {
       allowScrape: false,
     };
 
-    const posts = await fetchPostsFromSource(source);
+    const result = await fetchPostsFromSource(source);
     
-    expect(posts).toHaveLength(1);
-    expect(posts[0].title).toBe('Test Post 1');
-    expect(posts[0].url).toBe('https://example.com/post1');
+    expect(result.posts).toHaveLength(1);
+    expect(result.posts[0].title).toBe('Test Post 1');
+    expect(result.posts[0].url).toBe('https://example.com/post1');
   });
 
   it('should handle RSS fetch errors gracefully', async () => {

@@ -67,18 +67,7 @@ const nextConfig: NextConfig = {
         port: '',
         pathname: '/**',
       },
-      {
-        protocol: 'https',
-        hostname: 'cdn.openai.com',
-        port: '',
-        pathname: '/**',
-      },
-      {
-        protocol: 'https',
-        hostname: 'images.openai.com',
-        port: '',
-        pathname: '/**',
-      },
+
       {
         protocol: 'https',
         hostname: 'machinelearning.apple.com',
@@ -165,6 +154,12 @@ const nextConfig: NextConfig = {
       },
       {
         protocol: 'https',
+        hostname: '*.uber.com',
+        port: '',
+        pathname: '/**',
+      },
+      {
+        protocol: 'https',
         hostname: 'engineering.atspotify.com',
         port: '',
         pathname: '/**',
@@ -223,12 +218,7 @@ const nextConfig: NextConfig = {
         port: '',
         pathname: '/**',
       },
-      {
-        protocol: 'https',
-        hostname: 'images.ctfassets.net',
-        port: '',
-        pathname: '/**',
-      },
+
       {
         protocol: 'https',
         hostname: 'images.stripeassets.com',
@@ -238,12 +228,6 @@ const nextConfig: NextConfig = {
       {
         protocol: 'https',
         hostname: 'blog.uber-cdn.com',
-        port: '',
-        pathname: '/**',
-      },
-      {
-        protocol: 'https',
-        hostname: '*.ctfassets.net',
         port: '',
         pathname: '/**',
       },
@@ -304,6 +288,12 @@ const nextConfig: NextConfig = {
       {
         protocol: 'https',
         hostname: 'cdn.sanity.io',
+        port: '',
+        pathname: '/**',
+      },
+      {
+        protocol: 'https',
+        hostname: 'www.f5.com',
         port: '',
         pathname: '/**',
       },
