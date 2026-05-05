@@ -15,6 +15,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Research Blog Aggregator",
   description: "Discover and explore the latest research and engineering insights from top tech companies",
+  icons: {
+    icon: "/odyssey-logo.svg",
+  },
 };
 
 import { ThemeProvider } from "@/components/theme-provider";
