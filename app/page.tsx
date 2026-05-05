@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Search, RefreshCw, Loader2, Trash2, Building2 } from 'lucide-react';
+import { Search, RefreshCw, Loader2, Building2 } from 'lucide-react';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { CompanyPills } from '@/components/ui/company-pills';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -463,33 +463,6 @@ export default function Home() {
     setLastFetchDate(stored || today);
   }, []);
 
-  const handleSummarize = async (post: Post) => {
-    setPosts(prev => prev.map(p => p.id === post.id ? { ...p, ...post } : p));
-  };
-
-  const clearCache = async () => {
-    if (!confirm('Are you sure you want to clear all cached posts?')) return;
-
-    try {
-      const response = await fetch('/api/cache/clear', { method: 'POST' });
-      if (!response.ok) throw new Error('Failed to clear cache');
-
-      loadedPostIds.current.clear();
-      sourcePages.current.clear();
-      sourceHasMore.current.clear();
-      totalPostsCount.current = 0;
-      setPosts([]);
-
-      if (selectedCompany) {
-        loadPosts(selectedCompany, true);
-      }
-
-      alert('Cache cleared successfully!');
-    } catch (err) {
-      alert(`Failed to clear cache: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    }
-  };
-
   // Filter posts by search query
   const filteredPosts = searchQuery
     ? posts.filter(post => {
@@ -536,16 +509,6 @@ export default function Home() {
                   <span className="sr-only">Refresh</span>
                 </Button>
               )}
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={clearCache}
-                className="h-9 w-9"
-                title="Clear cache"
-              >
-                <Trash2 className="h-4 w-4" />
-                <span className="sr-only">Clear Cache</span>
-              </Button>
             </div>
           </div>
 
@@ -723,10 +686,7 @@ export default function Home() {
                         whileHover={{ y: -5, transition: { duration: 0.2 } }}
                         transition={{ duration: 0.2 }}
                       >
-                        <PostCard
-                          post={post}
-                          onSummarize={handleSummarize}
-                        />
+                        <PostCard post={post} />
                       </motion.div>
                     ))}
                   </AnimatePresence>

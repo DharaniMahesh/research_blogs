@@ -50,6 +50,13 @@ function extractTextFromHtml(html: string): string {
 
 export async function POST(request: NextRequest) {
   try {
+    if (process.env.ENABLE_SUMMARIZE !== 'true') {
+      return NextResponse.json(
+        { error: 'Summarization is disabled' },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
     const { url, title, content, author, publishedAt } = body;
 

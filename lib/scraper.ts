@@ -35,6 +35,7 @@ const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/
 // Retry configuration
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000; // 1 second
+const FETCH_TIMEOUT_MS = 10_000; // 10s per request — bound edge function time
 
 /**
  * Retry wrapper for async functions
@@ -66,8 +67,11 @@ async function retry<T>(
  */
 export async function fetchUrl(url: string, retries: number = MAX_RETRIES): Promise<string> {
   return retry(async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
       const response = await fetch(url, {
+        signal: controller.signal,
         headers: {
           'User-Agent': USER_AGENT,
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
@@ -87,34 +91,9 @@ export async function fetchUrl(url: string, retries: number = MAX_RETRIES): Prom
         throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
       }
 
-      return response.text();
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-
-      if (errorMessage.includes('certificate') || errorMessage.includes('SSL') || errorMessage.includes('TLS') || errorMessage.includes('UNABLE_TO_VERIFY')) {
-        console.warn(`SSL issue detected for ${url}, retrying with minimal headers...`);
-        try {
-          const simpleResponse = await fetch(url, {
-            headers: {
-              'User-Agent': USER_AGENT,
-            },
-          });
-
-          if (!simpleResponse.ok) {
-            throw new Error(`Failed to fetch ${url}: ${simpleResponse.status} ${simpleResponse.statusText}`);
-          }
-
-          return simpleResponse.text();
-        } catch (retryError) {
-          throw new Error(
-            `SSL certificate verification failed for ${url}. ` +
-            `This may be a temporary network issue. Please try again later. ` +
-            `Original error: ${errorMessage}`
-          );
-        }
-      }
-
-      throw error;
+      return await response.text();
+    } finally {
+      clearTimeout(timer);
     }
   }, retries);
 }

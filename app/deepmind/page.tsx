@@ -106,11 +106,6 @@ export default function DeepMindPage() {
     const pubCount = posts.filter(p => p.category === 'publication').length;
     const scienceCount = posts.filter(p => p.category === 'science').length;
 
-    const handleSummarize = async (post: Post) => {
-        // Optimistic update if needed, or just let PostCard handle it
-        setPosts(prev => prev.map(p => p.id === post.id ? { ...p, ...post } : p));
-    };
-
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-purple-950">
             {/* Header */}
@@ -264,10 +259,7 @@ export default function DeepMindPage() {
                                     whileHover={{ y: -5, transition: { duration: 0.2 } }}
                                     transition={{ duration: 0.2 }}
                                 >
-                                    <PostCard
-                                        post={post}
-                                        onSummarize={handleSummarize}
-                                    />
+                                    <PostCard post={post} />
                                 </motion.div>
                             ))}
                         </AnimatePresence>

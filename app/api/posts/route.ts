@@ -73,15 +73,22 @@ export async function GET(request: NextRequest) {
     const total = posts.length;
     const paginatedPosts = posts.slice(offset, offset + limit);
 
-    return NextResponse.json({
-      posts: paginatedPosts,
-      pagination: {
-        total,
-        limit,
-        offset,
-        hasMore: offset + limit < total,
+    return NextResponse.json(
+      {
+        posts: paginatedPosts,
+        pagination: {
+          total,
+          limit,
+          offset,
+          hasMore: offset + limit < total,
+        },
       },
-    });
+      {
+        headers: {
+          'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=1800',
+        },
+      }
+    );
   } catch (error) {
     console.error('Error in /api/posts:', error);
     return NextResponse.json(

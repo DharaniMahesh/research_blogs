@@ -123,16 +123,25 @@ export async function GET(request: NextRequest) {
       hasMore = true;
     }
 
-    return NextResponse.json({
-      posts,
-      sourceId,
-      page,
-      hasMore,
-      nextPageUrl,
-      detectedPattern,
-      fetchedAt: new Date().toISOString(),
-      cached: !shouldFetch,
-    });
+    return NextResponse.json(
+      {
+        posts,
+        sourceId,
+        page,
+        hasMore,
+        nextPageUrl,
+        detectedPattern,
+        fetchedAt: new Date().toISOString(),
+        cached: !shouldFetch,
+      },
+      {
+        headers: {
+          // CDN caches for 5 min, serves stale up to 30 min while revalidating.
+          // Reduces upstream load under high traffic.
+          'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=1800',
+        },
+      }
+    );
 
   } catch (error) {
     console.error('Error in /api/fetch:', error);

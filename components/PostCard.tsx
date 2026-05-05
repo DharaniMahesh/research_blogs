@@ -1,23 +1,18 @@
 'use client';
 
 import Image from 'next/image';
-import { Post, UseCase } from '@/types';
+import { Post } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { ExternalLink, BookOpen, Lightbulb, Bookmark, BookmarkCheck, Calendar, ArrowUpRight } from 'lucide-react';
+import { Bookmark, BookmarkCheck, Calendar, ArrowUpRight } from 'lucide-react';
 import { useState, useEffect } from 'react';
-import { cn } from '@/lib/utils';
 
 interface PostCardProps {
   post: Post;
-  onSummarize?: (post: Post) => Promise<void>;
 }
 
-export function PostCard({ post, onSummarize }: PostCardProps) {
+export function PostCard({ post }: PostCardProps) {
   const [isBookmarked, setIsBookmarked] = useState(false);
-  const [summary, setSummary] = useState<{ bullets?: string[]; hook?: string; usecases?: UseCase[] } | null>(null);
-  const [loading, setLoading] = useState(false);
   const [imageError, setImageError] = useState(false);
 
   useEffect(() => {
@@ -38,45 +33,6 @@ export function PostCard({ post, onSummarize }: PostCardProps) {
       localStorage.setItem('bookmarks', JSON.stringify(bookmarks));
       setIsBookmarked(true);
     }
-  };
-
-  const handleSummarize = async (e: React.MouseEvent) => {
-    // Do not stop propagation here, let DialogTrigger handle the open state
-    if (summary) return;
-
-    setLoading(true);
-    try {
-      const response = await fetch('/api/summarize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: post.url,
-          title: post.title,
-          content: post.rawHtml,
-          author: post.author,
-          publishedAt: post.publishedAt,
-        }),
-      });
-
-      if (!response.ok) throw new Error('Failed to summarize');
-
-      const data = await response.json();
-      setSummary(data);
-
-      if (onSummarize) {
-        await onSummarize({ ...post, ...data });
-      }
-    } catch (error) {
-      console.error('Error summarizing post:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const complexityColors = {
-    low: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
-    medium: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
-    high: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
   };
 
   return (
@@ -143,83 +99,12 @@ export function PostCard({ post, onSummarize }: PostCardProps) {
               {isBookmarked ? <BookmarkCheck className="h-4 w-4 fill-current" /> : <Bookmark className="h-4 w-4" />}
             </Button>
 
-            <Dialog>
-              <DialogTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:text-primary"
-                  onClick={handleSummarize}
-                  title="AI Summary"
-                >
-                  <Lightbulb className="h-4 w-4" />
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl p-0 gap-0">
-                <DialogHeader className="p-6 pb-2 sticky top-0 bg-background/95 backdrop-blur-sm z-10 border-b">
-                  <DialogTitle className="text-xl">Startup Use Cases</DialogTitle>
-                  <DialogDescription>
-                    Suggested business ideas based on this research
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="p-6 pt-4">
-                  {loading ? (
-                    <div className="flex items-center justify-center py-8">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-                    </div>
-                  ) : summary ? (
-                    <div className="space-y-6 pt-4">
-                      {summary.hook && (
-                        <div className="bg-muted/30 p-4 rounded-lg border">
-                          <h4 className="font-semibold mb-2 text-sm uppercase tracking-wider text-muted-foreground">The Hook</h4>
-                          <p className="text-base leading-relaxed">{summary.hook}</p>
-                        </div>
-                      )}
-                      {summary.bullets && summary.bullets.length > 0 && (
-                        <div>
-                          <h4 className="font-semibold mb-3 text-sm uppercase tracking-wider text-muted-foreground">Key Insights</h4>
-                          <ul className="space-y-3">
-                            {summary.bullets.map((bullet, idx) => (
-                              <li key={idx} className="flex items-start gap-3">
-                                <span className="text-primary mt-1.5 h-1.5 w-1.5 rounded-full bg-primary flex-shrink-0" />
-                                <span className="text-sm leading-relaxed">{bullet}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                      {(summary.usecases || post.usecases) && (
-                        <div>
-                          <h4 className="font-semibold mb-3 text-sm uppercase tracking-wider text-muted-foreground">Startup Opportunities</h4>
-                          <div className="grid gap-3">
-                            {(summary.usecases || post.usecases || []).map((usecase, idx) => (
-                              <div key={idx} className="border rounded-lg p-3 bg-card hover:bg-accent/5 transition-colors">
-                                <div className="flex items-center justify-between mb-1">
-                                  <span className="font-medium text-sm">{usecase.idea}</span>
-                                  <Badge variant="secondary" className="text-[10px] h-5">{usecase.complexity}</Badge>
-                                </div>
-                                <p className="text-xs text-muted-foreground">{usecase.oneLine}</p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="text-center py-8 text-muted-foreground">
-                      Click to generate an AI summary
-                    </div>
-                  )}
-                </div>
-
-              </DialogContent>
-            </Dialog>
-
             <Button
               variant="ghost"
               size="icon"
               className="h-8 w-8 text-muted-foreground hover:text-primary"
               onClick={() => window.open(post.url, '_blank')}
+              title="Open in new tab"
             >
               <ArrowUpRight className="h-4 w-4" />
             </Button>

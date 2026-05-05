@@ -107,10 +107,6 @@ export default function NetflixPage() {
     const blogCount = posts.filter(p => p.category === 'blog').length;
     const pubCount = posts.filter(p => p.category === 'publication').length;
 
-    const handleSummarize = async (post: Post) => {
-        setPosts(prev => prev.map(p => p.id === post.id ? { ...p, ...post } : p));
-    };
-
     return (
         <div className="min-h-screen bg-gradient-to-br from-black via-zinc-950 to-black">
             {/* Header */}
@@ -239,10 +235,7 @@ export default function NetflixPage() {
                                     whileHover={{ y: -5, transition: { duration: 0.2 } }}
                                     transition={{ duration: 0.2 }}
                                 >
-                                    <PostCard
-                                        post={post}
-                                        onSummarize={handleSummarize}
-                                    />
+                                    <PostCard post={post} />
                                 </motion.div>
                             ))}
                         </AnimatePresence>
